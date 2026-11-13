@@ -19,3 +19,4 @@ kysearch-dist.tar.gz
 # 测试临时
 *.bin
 *.sock
+AGENTS.md
