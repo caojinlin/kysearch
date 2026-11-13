@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=麒麟快搜
+Name[en]=KySearch
+Comment=秒级搜索全盘文件（Everything 风格）
+Comment[en]=Instant file-name search, Everything-style
+Exec=kysearch-gui
+Icon=kysearch
+Terminal=false
+Categories=Utility;FileTools;Qt;
+Keywords=search;file;everything;快搜;文件搜索;
+StartupNotify=true

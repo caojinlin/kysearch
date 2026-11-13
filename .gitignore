@@ -1,0 +1,21 @@
+# 构建产物
+build*/
+*.o
+*.a
+cmake-build-*/
+
+# 打包产物与分发
+*.deb
+packaging/deb/
+kysearch-src.tar.gz
+kysearch-dist.tar.gz
+
+# IDE / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 测试临时
+*.bin
+*.sock

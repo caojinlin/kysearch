@@ -1,0 +1,19 @@
+# kysearchd 索引守护进程 —— systemd 用户服务（随用户会话启停，无 root）
+# 安装: /usr/lib/systemd/user/kysearch.service（deb 已内置）
+# 启用: systemctl --user enable --now kysearch
+[Unit]
+Description=KySearch indexing daemon (麒麟快搜索引守护进程)
+Documentation=file:///usr/share/doc/kysearch/README.md
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/kysearchd
+# 内存纪律：守护进程自身限额，超限只杀自己，不波及同机其他服务
+MemoryMax=512M
+CPUWeight=40
+IOSchedulingClass=idle
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
