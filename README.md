@@ -4,6 +4,25 @@
 MFT/USN Journal，本项目用 **并行扫描 + 全内存索引 + 实时监控三级降级链**
 逼近 Everything 的体验，并针对中文场景增加 **拼音搜索** 与 **全文内容搜索**。
 
+## 下载安装
+
+**[⬇ 最新 Release 下载](https://github.com/caojinlin/kysearch/releases)** ·
+[直接下载 kysearch_0.2.0_amd64.deb](https://github.com/caojinlin/kysearch/releases/download/v0.2.0/kysearch_0.2.0_amd64.deb)
+
+```bash
+# 麒麟 V10（x86_64）安装：
+wget https://github.com/caojinlin/kysearch/releases/download/v0.2.0/kysearch_0.2.0_amd64.deb
+sudo dpkg -i kysearch_0.2.0_amd64.deb && sudo apt-get install -f -y
+
+# 启用实时索引守护进程（推荐）：
+systemctl --user enable --now kysearch
+loginctl enable-linger $USER     # 注销后仍保持索引（可选）
+
+kysearch-gui --remote            # 打开界面（连接守护进程，实时索引）
+```
+
+或从源码构建（依赖与多架构说明见 [docs/ADAPTATION.md](docs/ADAPTATION.md)）。
+
 ## 功能全景（M1–M4 + 优化轮全部交付）
 
 | 能力 | 说明 |
