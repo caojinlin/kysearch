@@ -11,6 +11,7 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -52,6 +53,12 @@ class Monitor {
   void rescan_now();  // 异步请求一次对账重扫
   size_t last_applied() const { return last_applied_.load(); }
 
+  // 热更新监控根集合：新增根建立 watch（索引条目由调用方先行写入），
+  // 移除根撤销 watch。返回值无用；线程安全（与事件/对账线程并发）。
+  void adopt_roots(const std::vector<std::string>& added,
+                   const std::vector<std::string>& removed);
+  std::vector<std::string> roots() const;  // 当前根快照（STATUS 用）
+
  private:
   void run_event_loop();
   void run_rescan();
@@ -91,6 +98,9 @@ class Monitor {
   // 并发读写；stop() 亦可能被并发调用（重复 join 属 UB）——各自加锁
   std::mutex watch_mtx_;
   std::mutex stop_mtx_;
+  mutable std::mutex roots_mtx_;  // opt_.roots 的读写锁（热更新 vs 对账线程）
+  // 根集合快照（apply_one 热路径用指针拷贝读取，避免每事件复制 vector）
+  std::shared_ptr<const std::vector<std::string>> roots_snap_;
   size_t watches_ok_ = 0, watches_fail_ = 0;
 };
 

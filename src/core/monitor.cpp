@@ -27,6 +27,8 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <algorithm>
+#include <unordered_set>
 
 #include "core/scanner.h"
 
@@ -61,7 +63,10 @@ std::int64_t now_ms() {
 
 }  // namespace
 
-Monitor::Monitor(FileIndex& idx, Options opt) : idx_(idx), opt_(std::move(opt)) {}
+Monitor::Monitor(FileIndex& idx, Options opt) : idx_(idx), opt_(std::move(opt)) {
+  roots_snap_ =
+      std::make_shared<const std::vector<std::string>>(opt_.roots);
+}
 
 Monitor::~Monitor() { stop(); }
 
@@ -112,6 +117,66 @@ void Monitor::stop() {
   if (stop_pipe_[1] >= 0) close(stop_pipe_[1]);
   stop_pipe_[0] = stop_pipe_[1] = -1;
   level_ = MonitorLevel::None;
+}
+
+std::vector<std::string> Monitor::roots() const {
+  std::lock_guard<std::mutex> g(roots_mtx_);
+  return opt_.roots;
+}
+
+// 热更新监控根（SETROOTS）：调用方需已把新增根的内容写入索引、
+// 已把移除根的内容从索引清除；这里同步 watch 集合与 roots 列表。
+void Monitor::adopt_roots(const std::vector<std::string>& added,
+                          const std::vector<std::string>& removed) {
+  {
+    std::lock_guard<std::mutex> g(roots_mtx_);
+    for (const auto& r : removed)
+      opt_.roots.erase(std::remove(opt_.roots.begin(), opt_.roots.end(), r),
+                       opt_.roots.end());
+    for (const auto& r : added)
+      if (std::find(opt_.roots.begin(), opt_.roots.end(), r) ==
+          opt_.roots.end())
+        opt_.roots.push_back(r);
+    roots_snap_ =
+        std::make_shared<const std::vector<std::string>>(opt_.roots);
+  }
+  if (level_ != MonitorLevel::Inotify || inotify_fd_ < 0)
+    return;  // fanotify/rescan 模式：由周期对账覆盖新根
+  // 撤销移除根下的全部 watch
+  if (!removed.empty()) {
+    std::lock_guard<std::mutex> g(watch_mtx_);
+    for (auto it = wd2dir_.begin(); it != wd2dir_.end();) {
+      bool under = false;
+      for (const auto& r : removed)
+        if (it->second == r || starts_with(it->second, r + "/")) {
+          under = true;
+          break;
+        }
+      if (under) {
+        ::inotify_rm_watch(inotify_fd_, it->first);
+        it = wd2dir_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  // 新增根：根自身 + 索引内其全部子目录补 watch（已 watch 的跳过）
+  if (!added.empty()) {
+    std::unordered_set<std::string> watched;
+    {
+      std::lock_guard<std::mutex> g(watch_mtx_);
+      for (const auto& kv : wd2dir_) watched.insert(kv.second);
+    }
+    for (const auto& a : added) {
+      watch_dir_inotify(a);
+      for (const auto& d : idx_.all_dir_paths()) {
+        if ((d == a || starts_with(d, a + "/")) && !watched.count(d)) {
+          watch_dir_inotify(d);
+          watched.insert(d);
+        }
+      }
+    }
+  }
 }
 
 void Monitor::rescan_now() { rescan_requested_ = true; }
@@ -284,6 +349,16 @@ void Monitor::watch_dir_inotify(const std::string& dir) {
 }
 
 void Monitor::add_subtree(const std::string& dir) {
+  // 直写索引的旁路必须同步记入回放日志：对账 swap 用扫描开始的快照，
+  // 扫描窗口内经此函数补录的条目会被覆盖，flush 路径有 recent_ 兜底而
+  // 这里原先没有——新目录整树在 swap 后"消失"的偶发根源。
+  auto log_recent = [this](const std::string& p) {
+    std::lock_guard<std::mutex> g(recent_mtx_);
+    recent_.emplace_back(p, false);
+    if (recent_.size() > kRecentCap)
+      recent_.erase(recent_.begin(),
+                    recent_.begin() + (recent_.size() - kRecentCap));
+  };
   std::error_code ec;
   for (fs::recursive_directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec), end;
        !ec && it != end; it.increment(ec)) {
@@ -306,10 +381,12 @@ void Monitor::add_subtree(const std::string& dir) {
       watch_dir_inotify(p);
       std::string nm = it->path().filename().string();
       idx_.upsert(p, 0, 0, EntryType::Dir, pname_of(nm));
+      log_recent(p);
     } else if (it->is_regular_file(e2)) {
       std::string nm = it->path().filename().string();
       std::error_code se;
       idx_.upsert(p, it->file_size(se), 0, EntryType::File, pname_of(nm));
+      log_recent(p);
     }
   }
 }
@@ -397,6 +474,21 @@ void Monitor::flush_pending() {
 
 // 单条变更入索引（flush 与对账回放共用；按时间序调用保证终态一致）
 void Monitor::apply_one(const std::string& path, bool removed) {
+  // 热移除根防护：SETROOTS 移除根后在途事件不再回填其路径
+  if (!removed) {
+    std::shared_ptr<const std::vector<std::string>> snap;
+    {
+      std::lock_guard<std::mutex> g(roots_mtx_);
+      snap = roots_snap_;
+    }
+    bool under = false;
+    for (const auto& r : *snap)
+      if (path == r || starts_with(path, r + "/")) {
+        under = true;
+        break;
+      }
+    if (!under) return;
+  }
   if (opt_.on_change) opt_.on_change(path, removed);
   if (removed) {
     idx_.remove_by_path(path);
@@ -467,7 +559,7 @@ void Monitor::run_rescan() {
   while (!stop_) {
     FileIndex fresh;
     ScanOptions so;
-    so.roots = opt_.roots;
+    so.roots = roots();  // 加锁快照：SETROOTS 热更新可能与对账并发
     so.exclude_names = opt_.exclude_names;
     so.pinyin_fn = opt_.pinyin_fn;
     so.threads = 0;

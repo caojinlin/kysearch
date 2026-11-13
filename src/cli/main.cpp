@@ -504,6 +504,19 @@ int main(int argc, char** argv) {
   if (cmd == "bench-typing") return cmd_bench_typing(args);
   if (cmd == "status") return cmd_remote("STATUS", args);
   if (cmd == "stop") return cmd_remote("STOP", args);
+  if (cmd == "rescan") return cmd_remote("RESCAN", args);
+  if (cmd == "setroots") {  // 热更新索引根：setroots /pathA /pathB ...
+    if (args.empty() || args[0].rfind("--", 0) == 0) {
+      std::fprintf(stderr, "用法: kysearch-cli setroots <绝对路径>...（全量覆盖现有根）\n");
+      return 2;
+    }
+    std::string req = "SETROOTS";
+    for (size_t si = 0; si < args.size(); ++si) {
+      if (args[si] == "--socket") { ++si; continue; }  // 连同取值一起跳过
+      req += "\t" + args[si];
+    }
+    return cmd_remote(req, args);
+  }
   if (cmd == "trash") return cmd_trash(args);
   if (cmd == "dup") return cmd_dup(args);
   std::fprintf(stderr, "未知命令: %s\n", cmd.c_str());

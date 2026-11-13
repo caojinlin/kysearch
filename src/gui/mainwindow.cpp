@@ -1312,7 +1312,16 @@ void MainWindow::openSettings() {
   }
   // 开机自启（与托盘菜单共用同一实现）
   set_gui_autostart(autostartBox->isChecked());
-  // 守护进程以 systemd 用户服务运行时自动重启，配置即时生效
+  // 远程模式：优先 SETROOTS 热生效（不重启守护进程、连接不断）
+  if (opt_.remote && sock_ &&
+      sock_->state() == QLocalSocket::ConnectedState && !rootsCsv.isEmpty()) {
+    QString cmd = QStringLiteral("SETROOTS");
+    for (const QString& r : roots) cmd += QLatin1Char('\t') + r;
+    sock_->write(cmd.toUtf8());
+    leftStatus_->setText(tr("✓ 索引根已实时生效（无需重启守护进程）"));
+    return;
+  }
+  // 回退：守护进程以 systemd 用户服务运行时自动重启，配置即时生效
   QProcess systemctl;
   systemctl.start(QStringLiteral("systemctl"),
                   {QStringLiteral("--user"), QStringLiteral("is-active"),

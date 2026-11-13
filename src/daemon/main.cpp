@@ -110,7 +110,7 @@ bool read_line(int fd, std::string& line, std::string& carry) {
 }
 
 void handle_client(int fd, kysearch::FileIndex& idx, kysearch::Monitor& mon,
-                   const std::vector<std::string>& roots,
+                   const std::vector<std::string>& exclude_names,
                    std::chrono::steady_clock::time_point t0
 #ifdef KYSEARCH_HAVE_SQLITE
                    ,
@@ -129,9 +129,9 @@ void handle_client(int fd, kysearch::FileIndex& idx, kysearch::Monitor& mon,
                     std::chrono::steady_clock::now() - t0)
                     .count();
       std::string roots_j;
-      for (size_t i = 0; i < roots.size(); ++i) {
-        if (i) roots_j += ",";
-        roots_j += roots[i];
+      for (const auto& r : mon.roots()) {
+        if (!roots_j.empty()) roots_j += ",";
+        roots_j += r;
       }
       // std::string 拼接（原固定 1024 栈缓冲会截断多根/长根且丢行尾 \n）
       std::string buf = "OK backend=";
@@ -140,6 +140,57 @@ void handle_client(int fd, kysearch::FileIndex& idx, kysearch::Monitor& mon,
       buf += " uptime=" + std::to_string((long long)up);
       buf += " roots=" + roots_j + "\n";
       send_all(fd, buf);
+      continue;
+    }
+    if (line.rfind("SETROOTS\t", 0) == 0) {
+      // 热更新索引根：SETROOTS\t<绝对路径>\t<绝对路径>…
+      // （tab 分隔；新增根即时扫描入索引，移除根即时清出索引并撤 watch）
+      std::vector<std::string> want;
+      {
+        const std::string rest = line.substr(9);
+        size_t start = 0;
+        while (start <= rest.size()) {
+          size_t tab = rest.find('\t', start);
+          std::string one = rest.substr(
+              start, tab == std::string::npos ? std::string::npos : tab - start);
+          std::error_code ec;
+          auto abs = std::filesystem::absolute(std::filesystem::path(one), ec);
+          if (!one.empty() && !ec)
+            want.push_back(abs.lexically_normal().string());
+          if (tab == std::string::npos) break;
+          start = tab + 1;
+        }
+      }
+      if (want.empty()) {
+        send_all(fd, "ERR empty roots\n");
+        continue;
+      }
+      const std::vector<std::string> cur = mon.roots();
+      std::vector<std::string> added, removed;
+      for (const auto& r : want)
+        if (std::find(cur.begin(), cur.end(), r) == cur.end())
+          added.push_back(r);
+      for (const auto& r : cur)
+        if (std::find(want.begin(), want.end(), r) == want.end())
+          removed.push_back(r);
+      for (const auto& r : removed) {
+        idx.remove_by_path(r);
+        idx.remove_by_path_prefix(r);
+      }
+      if (!added.empty()) {
+        kysearch::ScanOptions so;
+        so.roots = added;
+        so.exclude_names = exclude_names;
+        so.pinyin_fn = kysearch::pinyin_key;
+        kysearch::Scanner sc(idx);
+        sc.run(so);  // 末尾 finalize 顺带重整倒排/rank
+      }
+      mon.adopt_roots(added, removed);
+      idx.set_roots(mon.roots());  // 路径搜索根语义与监控根保持一致
+      std::string rep = "OK applied added=" + std::to_string(added.size()) +
+                        " removed=" + std::to_string(removed.size()) +
+                        " roots=" + std::to_string(mon.roots().size()) + "\n";
+      send_all(fd, rep);
       continue;
     }
     if (line == "RESCAN") {
@@ -613,7 +664,7 @@ int main(int argc, char** argv) {
     }
   };
   auto client_main = [&](int cfd, std::shared_ptr<std::atomic<bool>> done) {
-    handle_client(cfd, idx, mon, roots, t_start
+    handle_client(cfd, idx, mon, exclude_names, t_start
 #ifdef KYSEARCH_HAVE_SQLITE
                   ,
                   &text_

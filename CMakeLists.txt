@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(kysearch VERSION 0.1.0 LANGUAGES CXX)
+project(kysearch VERSION 0.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -97,7 +97,7 @@ endif()
 
 # ============ CLI ============
 add_executable(kysearch-cli src/cli/main.cpp)
-target_compile_definitions(kysearch-cli PRIVATE KYSEARCH_VERSION_STR="0.1.0")
+target_compile_definitions(kysearch-cli PRIVATE KYSEARCH_VERSION_STR="0.2.1")
 target_link_libraries(kysearch-cli PRIVATE kysearch_core)
 
 # ============ GUI（无 Qt 环境时自动跳过，只构建 CLI） ============

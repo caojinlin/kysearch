@@ -14,7 +14,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-VER="0.2.0"
+VER="0.2.1"
 STAGE="$(mktemp -d)/kysearch"
 trap 'rm -rf "$(dirname "$STAGE")"' EXIT
 

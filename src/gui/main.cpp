@@ -27,7 +27,7 @@ int main(int argc, char** argv) {
   }
   QApplication app(argc, argv);
   QApplication::setApplicationName(QStringLiteral("kysearch"));
-  QApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+  QApplication::setApplicationVersion(QStringLiteral("0.2.1"));
   QApplication::setQuitOnLastWindowClosed(true);
 
   QCommandLineParser p;
