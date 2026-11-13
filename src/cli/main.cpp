@@ -364,7 +364,8 @@ int cmd_remote(const std::string& verb, std::vector<std::string>& args) {
     return 1;
   }
   std::cout << out;
-  return 0;
+  // 守护进程显式报错时以非零码退出（原样打印但 rc=0 会误导脚本）
+  return out.rfind("ERR", 0) == 0 ? 1 : 0;
 }
 
 int cmd_trash(std::vector<std::string>& args) {
@@ -506,14 +507,19 @@ int main(int argc, char** argv) {
   if (cmd == "stop") return cmd_remote("STOP", args);
   if (cmd == "rescan") return cmd_remote("RESCAN", args);
   if (cmd == "setroots") {  // 热更新索引根：setroots /pathA /pathB ...
-    if (args.empty() || args[0].rfind("--", 0) == 0) {
-      std::fprintf(stderr, "用法: kysearch-cli setroots <绝对路径>...（全量覆盖现有根）\n");
-      return 2;
-    }
     std::string req = "SETROOTS";
+    size_t npaths = 0;
     for (size_t si = 0; si < args.size(); ++si) {
       if (args[si] == "--socket") { ++si; continue; }  // 连同取值一起跳过
-      req += "\t" + args[si];
+      // CLI 侧先绝对化：守护进程按自身 cwd 解释相对路径会错位
+      std::error_code aec;
+      auto abs = std::filesystem::absolute(std::filesystem::path(args[si]), aec);
+      if (!aec) req += "\t" + abs.lexically_normal().string();
+      ++npaths;
+    }
+    if (npaths == 0) {
+      std::fprintf(stderr, "用法: kysearch-cli setroots <路径>... [--socket P]（全量覆盖现有根）\n");
+      return 2;
     }
     return cmd_remote(req, args);
   }

@@ -128,15 +128,24 @@ std::vector<std::string> Monitor::roots() const {
 // 已把移除根的内容从索引清除；这里同步 watch 集合与 roots 列表。
 void Monitor::adopt_roots(const std::vector<std::string>& added,
                           const std::vector<std::string>& removed) {
+  // 尾斜杠规整："/a/" 与 "/a" 视为同一根（前缀判断 r+"/" 才不出 "//"）
+  auto norm = [](std::string r) {
+    while (r.size() > 1 && r.back() == '/') r.pop_back();
+    return r;
+  };
   {
     std::lock_guard<std::mutex> g(roots_mtx_);
-    for (const auto& r : removed)
+    for (const auto& r0 : removed) {
+      const std::string r = norm(r0);
       opt_.roots.erase(std::remove(opt_.roots.begin(), opt_.roots.end(), r),
                        opt_.roots.end());
-    for (const auto& r : added)
+    }
+    for (const auto& r0 : added) {
+      const std::string r = norm(r0);
       if (std::find(opt_.roots.begin(), opt_.roots.end(), r) ==
           opt_.roots.end())
         opt_.roots.push_back(r);
+    }
     roots_snap_ =
         std::make_shared<const std::vector<std::string>>(opt_.roots);
   }
@@ -296,7 +305,12 @@ void Monitor::drain_fanotify() {
             std::string path = dirpath;
             if (*name) path += '/', path += name;
             bool under_root = false;
-            for (const auto& r : opt_.roots)
+            std::shared_ptr<const std::vector<std::string>> rsnap;
+            {
+              std::lock_guard<std::mutex> g(roots_mtx_);
+              rsnap = roots_snap_;
+            }
+            for (const auto& r : *rsnap)
               if (path == r || starts_with(path, r + "/")) under_root = true;
             if (under_root) {
               std::lock_guard<std::mutex> g(pending_mtx_);

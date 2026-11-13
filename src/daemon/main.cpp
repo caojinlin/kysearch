@@ -165,6 +165,9 @@ void handle_client(int fd, kysearch::FileIndex& idx, kysearch::Monitor& mon,
         send_all(fd, "ERR empty roots\n");
         continue;
       }
+      // 串行化并发 SETROOTS（GUI+CLI 同时改时 diff 基线一致）
+      static std::mutex setroots_mtx;
+      std::lock_guard<std::mutex> sr_lock(setroots_mtx);
       const std::vector<std::string> cur = mon.roots();
       std::vector<std::string> added, removed;
       for (const auto& r : want)
@@ -185,8 +188,29 @@ void handle_client(int fd, kysearch::FileIndex& idx, kysearch::Monitor& mon,
         kysearch::Scanner sc(idx);
         sc.run(so);  // 末尾 finalize 顺带重整倒排/rank
       }
+#ifdef KYSEARCH_HAVE_SQLITE
+      // 热加根的内容索引：Scanner 不触发 on_change，这里对白名单文件补录
+      if (text && !added.empty()) {
+        for (const auto& a : added) {
+          std::error_code wec;
+          for (std::filesystem::recursive_directory_iterator
+                   wit(a, std::filesystem::directory_options::skip_permission_denied,
+                       wec),
+                   wend;
+               !wec && wit != wend; wit.increment(wec)) {
+            std::error_code stc;
+            if (wit->is_regular_file(stc) &&
+                kysearch::TextIndex::want_file(wit->path().string()))
+              text->index_file(wit->path().string());
+          }
+        }
+      }
+#endif
       mon.adopt_roots(added, removed);
       idx.set_roots(mon.roots());  // 路径搜索根语义与监控根保持一致
+      // 自愈兜底：若此刻恰有对账扫描在途（其快照不含新根），交换会丢新根
+      // 条目——立即再触发一轮对账，用新根集合完整重扫找回
+      mon.rescan_now();
       std::string rep = "OK applied added=" + std::to_string(added.size()) +
                         " removed=" + std::to_string(removed.size()) +
                         " roots=" + std::to_string(mon.roots().size()) + "\n";

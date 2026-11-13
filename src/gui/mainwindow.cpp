@@ -1317,6 +1317,7 @@ void MainWindow::openSettings() {
       sock_->state() == QLocalSocket::ConnectedState && !rootsCsv.isEmpty()) {
     QString cmd = QStringLiteral("SETROOTS");
     for (const QString& r : roots) cmd += QLatin1Char('\t') + r;
+    cmd += QLatin1Char('\n');  // 行协议必须以换行结束（否则守护进程永不处理）
     sock_->write(cmd.toUtf8());
     leftStatus_->setText(tr("✓ 索引根已实时生效（无需重启守护进程）"));
     return;
